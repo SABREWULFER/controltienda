@@ -15,7 +15,7 @@ create table if not exists public.time_logs (
   type text not null check (type in ('IN', 'OUT', 'PAUSE_START', 'PAUSE_END')),
   timestamp timestamptz not null default now(),
   notes text,
-  edited_by text,
+  edited_by uuid references public.employees(id) on delete set null,
   edited_at timestamptz
 );
 

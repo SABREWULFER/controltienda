@@ -3,6 +3,44 @@ import { EmployeeWorkStatus, TimeLog, TimeLogType } from '@/types/database';
 export const TIMEZONE = 'Europe/Madrid';
 
 /**
+ * Extrae el mensaje real de error tanto de instancias Error como de objetos PostgrestError de Supabase
+ */
+export function getErrorMessage(err: unknown): string {
+  if (!err) return 'Error desconocido';
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'object') {
+    const obj = err as Record<string, unknown>;
+    if (typeof obj.message === 'string' && obj.message.trim() !== '') {
+      const details =
+        typeof obj.details === 'string' && obj.details.trim() !== ''
+          ? ` (${obj.details})`
+          : '';
+      const hint =
+        typeof obj.hint === 'string' && obj.hint.trim() !== ''
+          ? ` - Sugerencia: ${obj.hint}`
+          : '';
+      return `${obj.message}${details}${hint}`;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
+/**
+ * Comprueba si una cadena tiene formato UUID válido
+ */
+export function isValidUuid(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value.trim()
+  );
+}
+
+/**
  * Formatea una fecha ISO en formato español legible (Europe/Madrid)
  */
 export function formatDateTimeSpain(isoString: string | null | undefined): string {
@@ -65,6 +103,37 @@ export function toMadridDateTimeLocalValue(isoString: string): string {
   const get = (type: string) => parts.find((p) => p.type === type)?.value || '00';
   const hour = get('hour') === '24' ? '00' : get('hour');
   return `${get('year')}-${get('month')}-${get('day')}T${hour}:${get('minute')}`;
+}
+
+/**
+ * Convierte un valor de <input type="datetime-local"> (YYYY-MM-DDTHH:mm) a un ISO string válido
+ */
+export function fromDateTimeLocalToISO(value: string): string | null {
+  if (!value || !value.trim()) return null;
+  const trimmed = value.trim();
+
+  // Desglosar explícitamente YYYY-MM-DDTHH:mm[:ss] para evitar fallos en navegadores
+  const match = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/
+  );
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6] || 0);
+    const localDate = new Date(year, month - 1, day, hour, minute, second);
+    if (!isNaN(localDate.getTime())) {
+      return localDate.toISOString();
+    }
+  }
+
+  const fallback = new Date(trimmed);
+  if (!isNaN(fallback.getTime())) {
+    return fallback.toISOString();
+  }
+  return null;
 }
 
 /**
@@ -180,8 +249,11 @@ export function calculateDailyWorkSummaries(logs: TimeLog[]): DailyWorkSummary[]
 
       if (log.notes) notesList.push(log.notes);
       if (log.edited_by) {
+        const editorLabel = log.editor
+          ? `${log.editor.name} (${log.editor.dni})`
+          : log.edited_by;
         editsList.push(
-          `Editado por ${log.edited_by} (${formatDateTimeSpain(log.edited_at)})`
+          `Editado por ${editorLabel} (${formatDateTimeSpain(log.edited_at)})`
         );
       }
 

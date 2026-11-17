@@ -22,6 +22,7 @@ export interface TimeLog {
   edited_by: string | null;
   edited_at: string | null;
   employees?: Employee | null;
+  editor?: Employee | null;
 }
 
 export interface Fridge {

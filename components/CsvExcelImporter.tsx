@@ -12,6 +12,7 @@ import {
   Database,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { getErrorMessage, isValidUuid } from '@/lib/utils';
 import { Employee, Fridge, TimeLogType } from '@/types/database';
 
 interface CsvExcelImporterProps {
@@ -326,12 +327,16 @@ export default function CsvExcelImporter({
               ? String(row[colNotes]).trim()
               : 'Importado desde histórico Excel/CSV';
 
+          const adminUuid = isValidUuid(currentAdmin?.id)
+            ? currentAdmin.id
+            : employees.find((e) => isValidUuid(e.id))?.id || currentAdmin.id;
+
           payload.push({
             employee_id: empId,
             type: typeVal,
             timestamp: parsedIso,
             notes: notesVal,
-            edited_by: `${currentAdmin.name} (Importación Histórica)`,
+            edited_by: adminUuid,
             edited_at: nowIso,
           });
         }
@@ -446,9 +451,7 @@ export default function CsvExcelImporter({
     } catch (err) {
       setResultMsg({
         type: 'error',
-        text: `Error al volcar a Supabase: ${
-          err instanceof Error ? err.message : 'Error desconocido'
-        }`,
+        text: `Error al volcar a Supabase: ${getErrorMessage(err)}`,
       });
     } finally {
       setImporting(false);

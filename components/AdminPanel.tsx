@@ -34,9 +34,12 @@ import {
   calculateDailyWorkSummaries,
   formatDateTimeSpain,
   formatMinutesToHHMM,
+  fromDateTimeLocalToISO,
+  getErrorMessage,
   getMonthDateRangeISO,
   getTimeLogTypeLabel,
   isInMadridMonthYear,
+  isValidUuid,
   toMadridDateTimeLocalValue,
 } from '@/lib/utils';
 import {
@@ -181,6 +184,7 @@ export default function AdminPanel({
         .map((l) => ({
           ...l,
           employees: empMap.get(l.employee_id) || null,
+          editor: l.edited_by ? empMap.get(l.edited_by) || null : null,
         }));
 
       const enrichedTempLogs: TemperatureLog[] = (
@@ -200,9 +204,7 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `Error cargando datos: ${
-          err instanceof Error ? err.message : 'Error de conexión'
-        }`,
+        text: `Error cargando datos: ${getErrorMessage(err)}`,
       });
     } finally {
       setLoading(false);
@@ -247,6 +249,38 @@ export default function AdminPanel({
     }).length;
   }, [filteredTempLogs]);
 
+  // Obtiene un UUID válido para el administrador actual
+  const resolveValidAdminUuid = async (): Promise<string> => {
+    if (isValidUuid(currentAdmin?.id)) {
+      return currentAdmin.id.trim();
+    }
+    const adminInList =
+      employees.find(
+        (e) =>
+          isValidUuid(e.id) &&
+          (e.pin_code === currentAdmin?.pin_code || e.role === 'admin')
+      ) || employees.find((e) => isValidUuid(e.id));
+
+    if (adminInList) {
+      return adminInList.id.trim();
+    }
+
+    const { data, error } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('role', 'admin')
+      .limit(1)
+      .single();
+
+    if (!error && data && isValidUuid(data.id)) {
+      return data.id.trim();
+    }
+
+    throw new Error(
+      'No se pudo obtener un UUID válido del administrador actual para auditar el cambio (edited_by).'
+    );
+  };
+
   // Abrir modal de edición de fichaje
   const openEditLogModal = (log: TimeLog) => {
     setEditingLog(log);
@@ -255,7 +289,7 @@ export default function AdminPanel({
     setEditNotes(log.notes || '');
   };
 
-  // Guardar edición de fichaje (dejando constancia en edited_by y edited_at)
+  // Guardar edición de fichaje (dejando constancia en edited_by con UUID válido y edited_at en ISO)
   const handleSaveLogEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLog || !editDateTime) return;
@@ -263,21 +297,21 @@ export default function AdminPanel({
     setSavingEdit(true);
     setFeedback(null);
     try {
-      const parsedDate = new Date(editDateTime);
-      if (isNaN(parsedDate.getTime())) {
-        throw new Error('La fecha y hora introducidas no son válidas.');
+      const isoTimestamp = fromDateTimeLocalToISO(editDateTime);
+      if (!isoTimestamp) {
+        throw new Error('La fecha y hora introducidas no tienen un formato ISO válido.');
       }
 
+      const adminUuid = await resolveValidAdminUuid();
       const serverNow = await getSupabaseServerTimestamp();
-      const editorLabel = `${currentAdmin.name} (${currentAdmin.dni})`;
 
       const { error } = await supabase
         .from('time_logs')
         .update({
           type: editType,
-          timestamp: parsedDate.toISOString(),
+          timestamp: isoTimestamp,
           notes: editNotes.trim() || null,
-          edited_by: editorLabel,
+          edited_by: adminUuid,
           edited_at: serverNow,
         })
         .eq('id', editingLog.id);
@@ -286,7 +320,7 @@ export default function AdminPanel({
 
       setFeedback({
         type: 'success',
-        text: `Fichaje actualizado. Constancia de auditoría registrada (${editorLabel}).`,
+        text: `Fichaje actualizado correctamente. Auditoría registrada por ${currentAdmin.name}.`,
       });
       setEditingLog(null);
       await fetchAdminData();
@@ -294,16 +328,14 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `No se pudo actualizar el fichaje: ${
-          err instanceof Error ? err.message : 'Error desconocido'
-        }`,
+        text: `No se pudo actualizar el fichaje: ${getErrorMessage(err)}`,
       });
     } finally {
       setSavingEdit(false);
     }
   };
 
-  // Crear fichaje manual (con auditoría)
+  // Crear fichaje manual (con auditoría UUID válido en edited_by)
   const handleCreateManualLog = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLogEmployeeId || !newLogDateTime) return;
@@ -311,20 +343,20 @@ export default function AdminPanel({
     setFeedback(null);
 
     try {
-      const parsedDate = new Date(newLogDateTime);
-      if (isNaN(parsedDate.getTime())) {
-        throw new Error('Fecha u hora inválida.');
+      const isoTimestamp = fromDateTimeLocalToISO(newLogDateTime);
+      if (!isoTimestamp) {
+        throw new Error('La fecha y hora introducidas no tienen un formato ISO válido.');
       }
 
+      const adminUuid = await resolveValidAdminUuid();
       const serverNow = await getSupabaseServerTimestamp();
-      const editorLabel = `${currentAdmin.name} (${currentAdmin.dni})`;
 
       const { error } = await supabase.from('time_logs').insert({
         employee_id: newLogEmployeeId,
         type: newLogType,
-        timestamp: parsedDate.toISOString(),
+        timestamp: isoTimestamp,
         notes: newLogNotes.trim() || 'Registro manual por administración',
-        edited_by: editorLabel,
+        edited_by: adminUuid,
         edited_at: serverNow,
       });
 
@@ -341,9 +373,7 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `Error al añadir fichaje: ${
-          err instanceof Error ? err.message : 'Error desconocido'
-        }`,
+        text: `Error al añadir fichaje: ${getErrorMessage(err)}`,
       });
     } finally {
       setSavingEdit(false);
@@ -419,9 +449,7 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `Error al guardar empleado: ${
-          err instanceof Error ? err.message : 'Error desconocido'
-        }`,
+        text: `Error al guardar empleado: ${getErrorMessage(err)}`,
       });
     } finally {
       setSavingEmp(false);
@@ -440,9 +468,7 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `Error al cambiar estado del empleado: ${
-          err instanceof Error ? err.message : 'Error'
-        }`,
+        text: `Error al cambiar estado del empleado: ${getErrorMessage(err)}`,
       });
     }
   };
@@ -502,9 +528,7 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `Error al guardar nevera: ${
-          err instanceof Error ? err.message : 'Error desconocido'
-        }`,
+        text: `Error al guardar nevera: ${getErrorMessage(err)}`,
       });
     } finally {
       setSavingFridge(false);
@@ -523,9 +547,7 @@ export default function AdminPanel({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: `Error al cambiar estado de la nevera: ${
-          err instanceof Error ? err.message : 'Error'
-        }`,
+        text: `Error al cambiar estado de la nevera: ${getErrorMessage(err)}`,
       });
     }
   };
@@ -932,7 +954,10 @@ export default function AdminPanel({
                             {log.edited_by ? (
                               <div className="text-amber-300">
                                 <span className="font-semibold">
-                                  Editado por: {log.edited_by}
+                                  Editado por:{' '}
+                                  {log.editor
+                                    ? `${log.editor.name} (${log.editor.dni})`
+                                    : log.edited_by}
                                 </span>
                                 <br />
                                 <span className="text-slate-400">

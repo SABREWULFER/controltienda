@@ -94,7 +94,9 @@ export function exportLaborInspectionExcel(
       'Tipo de Fichaje': getTimeLogTypeLabel(log.type),
       'Total Jornada Día': dailyTotal,
       Notas: log.notes || '-',
-      'Modificado Por': log.edited_by || 'Original',
+      'Modificado Por': log.editor
+        ? `${log.editor.name} (${log.editor.dni})`
+        : log.edited_by || 'Original',
       'Fecha Modificación': log.edited_at
         ? formatDateTimeSpain(log.edited_at)
         : '-',
